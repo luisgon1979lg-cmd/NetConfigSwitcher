@@ -8,6 +8,10 @@ Aplicación moderna para Windows desarrollada en **Python** con **CustomTkinter*
 
 ## ✨ Características Principales
 
+- **Doble Modo (IP Estática y DHCP Automático)**:
+  - **APPLY SETTINGS (ESTÁTICA)**: Configura la IP estática personalizada con máscara y gateway.
+  - **⚡ OBTENER IP AUTOMÁTICA (DHCP)**: Restablece el adaptador para obtener IP y servidores DNS de forma automática mediante DHCP con un solo clic.
+- **Detección del Modo Actual**: Muestra en tiempo real si el adaptador seleccionado se encuentra en modo DHCP o con IP Estática, junto con su dirección IP activa.
 - **Elevación Automática de Privilegios (UAC)**: Detecta al inicio si se cuenta con permisos de administrador. Si no, solicita elevación automáticamente en Windows.
 - **Selector de Adaptador**: Menú desplegable para elegir de forma estricta entre adaptadores como `WiFi 2` y `Ethernet 5`, con detección dinámica del nombre real del sistema.
 - **Entrada Visual de Octetos**: 4 bloques estilizados con borde violeta (`#70569f`):
