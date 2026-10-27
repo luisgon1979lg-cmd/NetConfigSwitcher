@@ -28,7 +28,16 @@ TEXT_LIGHT = "#f8fafc"        # Blanco / texto destacado
 FONT_FAMILY = "Segoe UI"
 
 PASSWORD_SUBNET = "6363"
-HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ip_history.json")
+
+# Directorio base para persistencia de datos (compatible con PyInstaller frozen)
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+    BUNDLE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BUNDLE_DIR = BASE_DIR
+
+HISTORY_FILE = os.path.join(BASE_DIR, "ip_history.json")
 
 
 # ==========================================
@@ -153,6 +162,14 @@ class NetConfigSwitcher(ctk.CTk):
         
         # Centrar ventana en pantalla
         self.center_window(490, 590)
+
+        # Aplicar icono si existe
+        icon_path = os.path.join(BUNDLE_DIR, "icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception:
+                pass
 
         # Estado interno
         self.subnet_locked = True
@@ -646,12 +663,19 @@ def verify_admin_elevation():
         is_admin = False
 
     if not is_admin:
-        # Re-ejecutar el script con runas para elevar privilegios
-        script = os.path.abspath(sys.argv[0])
-        params = " ".join([f'"{arg}"' for arg in sys.argv[1:]])
-        ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", sys.executable, f'"{script}" {params}'.strip(), None, 1
-        )
+        # Re-ejecutar con runas para elevar privilegios
+        if getattr(sys, "frozen", False):
+            exe_path = sys.executable
+            params = " ".join([f'"{arg}"' for arg in sys.argv[1:]])
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", exe_path, params, None, 1
+            )
+        else:
+            script = os.path.abspath(sys.argv[0])
+            params = " ".join([f'"{arg}"' for arg in sys.argv[1:]])
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", sys.executable, f'"{script}" {params}'.strip(), None, 1
+            )
         sys.exit(0)
     return True
 

@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# PyInstaller build artifacts
+build/
+dist/
+*.exe
+
 # Local history / state
 ip_history.json
 
@@ -17,3 +22,4 @@ ENV/
 .vscode/
 .idea/
 *.swp
+

@@ -50,15 +50,30 @@ pip install -r requirements.txt
 
 ## 🚀 Uso
 
-### Opción A (Recomendada): Doble clic
+### Opción A (Ejecutable Portable .EXE - Sin necesidad de Python)
+Simplemente haz doble clic sobre:
+```
+NetConfigUtility.exe
+```
+> **Nota de Portabilidad**: Este archivo `.exe` es completamente autónomo (incluye Python y librerías). Puedes copiar únicamente el archivo `NetConfigUtility.exe` a un pendrive USB o a cualquier otro ordenador con Windows 10/11 y funcionará directamente sin instalar nada.
+
+### Opción B: Doble clic con script Batch
 Ejecuta el archivo:
 ```
 Iniciar_NetConfigUtility.bat
 ```
 
-### Opción B: Desde la línea de comandos
+### Opción C: Desde la línea de comandos de Python
 ```bash
 python NetConfigSwitcher.py
+```
+
+---
+
+## 📦 Compilación del Ejecutable (.EXE)
+Si realizas modificaciones en el código y deseas regenerar el ejecutable standalone:
+```bash
+python -m PyInstaller --noconsole --onefile --name "NetConfigUtility" --icon "icon.ico" --add-data "icon.ico;." --collect-all customtkinter --uac-admin NetConfigSwitcher.py
 ```
 
 ---
@@ -66,3 +81,4 @@ python NetConfigSwitcher.py
 ## 🔐 Seguridad
 - **Contraseña para desbloquear la máscara de subred**: `6363`
 - La aplicación no almacena credenciales de red sensibles y solo modifica configuraciones locales de interfaz a petición expresa del usuario.
+
