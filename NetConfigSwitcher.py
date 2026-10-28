@@ -1,6 +1,7 @@
 """
-NetConfigUtility v1.1 - NetConfigSwitcher
-Automatización de direcciones IP (Estáticas y Automáticas por DHCP) con CustomTkinter y permisos de Administrador en Windows.
+NetConfigUtility v1.2 - NetConfigSwitcher
+Automatización de direcciones IP (Estáticas y DHCP) adaptable a cualquier ordenador Windows.
+Diseño simétrico con casillas individuales para IP y Gateway, desbloqueo con clave 6363 y acceso directo a Conexiones de Red.
 """
 
 import os
@@ -19,7 +20,7 @@ from tkinter import messagebox
 BG_DARK = "#1f222e"           # Fondo principal de la ventana
 PANEL_BG = "#262939"          # Fondo de campos y contenedores
 BORDER_PURPLE = "#70569f"     # Borde morado característico del diseño
-BORDER_SUBTLE = "#3b3e52"     # Borde sutil para subred y gateway
+BORDER_SUBTLE = "#3b3e52"     # Borde sutil para subred y controles
 ACCENT_CYAN = "#43eeff"       # Cyan brillante / Neón
 ACCENT_CYAN_HOVER = "#06b6d4" # Hover para botones cyan
 TEXT_DARK = "#0b1329"         # Texto oscuro sobre fondo cyan
@@ -27,7 +28,7 @@ TEXT_MUTED = "#94a3b8"        # Color gris claro para etiquetas
 TEXT_LIGHT = "#f8fafc"        # Blanco / texto destacado
 FONT_FAMILY = "Segoe UI"
 
-PASSWORD_SUBNET = "6363"
+PASSWORD_SECURITY = "6363"    # Clave para desbloquear máscara y gateway
 
 # Directorio base para persistencia de datos (compatible con PyInstaller frozen)
 if getattr(sys, "frozen", False):
@@ -155,13 +156,13 @@ class NetConfigSwitcher(ctk.CTk):
         super().__init__()
         
         # Configuración básica de ventana
-        self.title("NetConfigUtility v1.1")
-        self.geometry("490x650")
+        self.title("NetConfigUtility v1.2")
+        self.geometry("500x670")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         
         # Centrar ventana en pantalla
-        self.center_window(490, 650)
+        self.center_window(500, 670)
 
         # Aplicar icono si existe
         icon_path = os.path.join(BUNDLE_DIR, "icon.ico")
@@ -171,8 +172,9 @@ class NetConfigSwitcher(ctk.CTk):
             except Exception:
                 pass
 
-        # Estado interno
+        # Estados internos
         self.subnet_locked = True
+        self.gw_locked = True
         self.history_mgr = HistoryManager()
         self.system_adapters = self.detect_system_adapters()
 
@@ -187,23 +189,58 @@ class NetConfigSwitcher(ctk.CTk):
         self.geometry(f"{width}x{height}+{x}+{y}")
 
     def detect_system_adapters(self) -> List[str]:
-        """Detecta las interfaces de red dedicadas disponibles en Windows."""
+        """
+        Detecta dinámicamente las interfaces de red disponibles en cualquier equipo Windows.
+        Se adapta a ordenadores en cualquier idioma (Español, Inglés, etc.).
+        """
         adapters = []
         try:
             res = subprocess.run(
                 ["netsh", "interface", "show", "interface"],
                 capture_output=True, text=True, errors="replace"
             )
+            header_passed = False
             for line in res.stdout.splitlines():
-                m = re.search(r'(Dedicado|Dedicated)\s+(.+)$', line)
-                if m:
-                    adapters.append(m.group(2).strip())
+                if "---" in line:
+                    header_passed = True
+                    continue
+                if header_passed and line.strip():
+                    parts = line.strip().split(None, 3)
+                    if len(parts) == 4:
+                        name = parts[3].strip()
+                        state = parts[1].strip().lower()
+                        if "loopback" not in name.lower():
+                            # Priorizar adaptadores conectados
+                            if any(c in state for c in ("conectado", "connected", "up")):
+                                adapters.insert(0, name)
+                            else:
+                                adapters.append(name)
         except Exception:
             pass
+
+        # Fallback a PowerShell Get-NetAdapter si netsh no arrojó resultados
+        if not adapters:
+            try:
+                ps_cmd = 'Get-NetAdapter | Where-Object { $_.PhysicalMediaType -ne "Unspecified" -or $_.HardwareInterface } | Select-Object -ExpandProperty Name'
+                res_ps = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_cmd],
+                    capture_output=True, text=True, errors="replace"
+                )
+                for line in res_ps.stdout.splitlines():
+                    n = line.strip()
+                    if n and n not in adapters:
+                        adapters.append(n)
+            except Exception:
+                pass
+
+        # Fallback final si es un equipo sin interfaces activas
+        if not adapters:
+            adapters = ["Ethernet", "Wi-Fi"]
+            
         return adapters
 
     def resolve_adapter_name(self, selected_name: str) -> str:
-        """Mapea el nombre seleccionado (ej. 'WiFi 2') al nombre real de la interfaz (ej. 'Wi-Fi 2')."""
+        """Mapea el nombre seleccionado al nombre real de la interfaz."""
         if selected_name in self.system_adapters:
             return selected_name
         
@@ -212,6 +249,27 @@ class NetConfigSwitcher(ctk.CTk):
             if adapter.replace(" ", "").replace("-", "").lower() == norm_selected:
                 return adapter
         return selected_name
+
+    def refresh_adapter_list(self):
+        """Vuelve a consultar los adaptadores de red reales del equipo y actualiza el desplegable."""
+        self.system_adapters = self.detect_system_adapters()
+        if self.system_adapters:
+            curr = self.adapter_var.get()
+            new_val = curr if curr in self.system_adapters else self.system_adapters[0]
+            self.combo_adapter.configure(values=self.system_adapters)
+            self.adapter_var.set(new_val)
+            self.refresh_current_adapter_status()
+            self.lbl_status.configure(text=f"Adaptadores actualizados ({len(self.system_adapters)} detectados)")
+        else:
+            self.lbl_status.configure(text="No se detectaron adaptadores de red activos")
+
+    def open_network_connections(self):
+        """Abre directamente la página de Conexiones de Red de Windows (ncpa.cpl)."""
+        try:
+            subprocess.Popen("control.exe ncpa.cpl", shell=True)
+            self.lbl_status.configure(text="Abriendo Conexiones de Red de Windows (ncpa.cpl)...")
+        except Exception as ex:
+            messagebox.showerror("Error", f"No se pudo abrir Conexiones de Red:\n{str(ex)}")
 
     def get_adapter_info(self, adapter_name: str) -> Dict:
         """Consulta el estado actual de IP y DHCP de una interfaz."""
@@ -265,22 +323,26 @@ class NetConfigSwitcher(ctk.CTk):
     def build_ui(self):
         # 0. Título superior elegante
         title_label = ctk.CTkLabel(
-            self, text="NetConfigUtility v1.1",
+            self, text="NetConfigUtility v1.2",
             font=(FONT_FAMILY, 15, "bold"),
             text_color=TEXT_LIGHT
         )
-        title_label.pack(pady=(18, 12))
+        title_label.pack(pady=(16, 10))
 
-        # 1. Selector de Adaptador
-        adapter_options = ["WiFi 2", "Ethernet 5"]
-        self.adapter_var = ctk.StringVar(value=adapter_options[0])
+        # 1. Fila de Adaptador: Selector dinámico + Botón Refrescar + Botón Conexiones de Red
+        frame_adapter_row = ctk.CTkFrame(self, fg_color="transparent")
+        frame_adapter_row.pack(pady=(0, 4))
+
+        self.adapter_var = ctk.StringVar(
+            value=self.system_adapters[0] if self.system_adapters else "Ethernet"
+        )
 
         self.combo_adapter = ctk.CTkOptionMenu(
-            self,
-            values=adapter_options,
+            frame_adapter_row,
+            values=self.system_adapters if self.system_adapters else ["(Sin adaptadores)"],
             variable=self.adapter_var,
             command=self._on_adapter_changed,
-            width=360,
+            width=260,
             height=38,
             corner_radius=10,
             fg_color=PANEL_BG,
@@ -290,15 +352,46 @@ class NetConfigSwitcher(ctk.CTk):
             dropdown_hover_color="#343950",
             dropdown_text_color=TEXT_LIGHT,
             text_color=TEXT_LIGHT,
-            font=(FONT_FAMILY, 13, "bold"),
-            dropdown_font=(FONT_FAMILY, 12)
+            font=(FONT_FAMILY, 12, "bold"),
+            dropdown_font=(FONT_FAMILY, 11)
         )
-        self.combo_adapter.configure(dynamic_resizing=False)
-        self.combo_adapter.pack(pady=(0, 6))
+        self.combo_adapter.pack(side="left", padx=(0, 6))
+
+        # Botón para refrescar la lista de adaptadores
+        self.btn_refresh_adapters = ctk.CTkButton(
+            frame_adapter_row,
+            text="🔄",
+            width=36,
+            height=38,
+            corner_radius=8,
+            fg_color=PANEL_BG,
+            hover_color="#33374c",
+            text_color=ACCENT_CYAN,
+            font=(FONT_FAMILY, 14),
+            command=self.refresh_adapter_list
+        )
+        self.btn_refresh_adapters.pack(side="left", padx=(0, 6))
+
+        # Botón para abrir Conexiones de Red de Windows (ncpa.cpl)
+        self.btn_open_ncpa = ctk.CTkButton(
+            frame_adapter_row,
+            text="🌐 Redes",
+            width=78,
+            height=38,
+            corner_radius=8,
+            fg_color=PANEL_BG,
+            hover_color="#33374c",
+            border_color=BORDER_SUBTLE,
+            border_width=1,
+            text_color=TEXT_LIGHT,
+            font=(FONT_FAMILY, 11, "bold"),
+            command=self.open_network_connections
+        )
+        self.btn_open_ncpa.pack(side="left")
 
         # Indicador de Modo Actual de la Red (DHCP vs Estática)
         frame_mode_status = ctk.CTkFrame(self, fg_color="transparent")
-        frame_mode_status.pack(pady=(0, 14))
+        frame_mode_status.pack(pady=(0, 10))
 
         self.lbl_adapter_mode = ctk.CTkLabel(
             frame_mode_status,
@@ -310,14 +403,14 @@ class NetConfigSwitcher(ctk.CTk):
 
         btn_refresh_status = ctk.CTkButton(
             frame_mode_status,
-            text="🔄",
-            width=24,
-            height=22,
-            corner_radius=11,
+            text="🔍",
+            width=22,
+            height=20,
+            corner_radius=10,
             fg_color="transparent",
             hover_color="#33374c",
             text_color=TEXT_MUTED,
-            font=(FONT_FAMILY, 11),
+            font=(FONT_FAMILY, 10),
             command=self.refresh_current_adapter_status
         )
         btn_refresh_status.pack(side="left")
@@ -328,36 +421,31 @@ class NetConfigSwitcher(ctk.CTk):
             font=(FONT_FAMILY, 12, "bold"),
             text_color=TEXT_MUTED
         )
-        lbl_ip.pack(pady=(0, 5))
+        lbl_ip.pack(pady=(0, 4))
 
-        # 4 Cajas de Octetos idénticas al diseño
+        # 4 Cajas de Octetos para IP
         frame_octets = ctk.CTkFrame(self, fg_color="transparent")
-        frame_octets.pack(pady=(0, 10))
+        frame_octets.pack(pady=(0, 8))
 
-        # Octeto 1 (Fijo: 192)
         self.entry_oct1 = self._create_octet_box(frame_octets, "192", readonly=True)
         self.entry_oct1.pack(side="left", padx=4)
 
-        # Octeto 2 (Fijo: 168)
         self.entry_oct2 = self._create_octet_box(frame_octets, "168", readonly=True)
         self.entry_oct2.pack(side="left", padx=4)
 
-        # Octeto 3 (Editable: default 1)
         self.entry_oct3 = self._create_octet_box(frame_octets, "1", readonly=False)
         self.entry_oct3.pack(side="left", padx=4)
         self.entry_oct3.bind("<KeyRelease>", self._on_oct3_change)
         self.entry_oct3.bind("<Key>", self._filter_octet_keys)
 
-        # Octeto 4 (Editable: default 100)
         self.entry_oct4 = self._create_octet_box(frame_octets, "100", readonly=False)
         self.entry_oct4.pack(side="left", padx=4)
         self.entry_oct4.bind("<Key>", self._filter_octet_keys)
 
         # Fila de Acciones: Botón Clear IP + Selector de Historial FIFO
         frame_ip_actions = ctk.CTkFrame(self, fg_color="transparent")
-        frame_ip_actions.pack(pady=(0, 16))
+        frame_ip_actions.pack(pady=(0, 14))
 
-        # Botón Clear IP (píldora cyan)
         self.btn_clear = ctk.CTkButton(
             frame_ip_actions,
             text="✕ Clear IP",
@@ -372,7 +460,6 @@ class NetConfigSwitcher(ctk.CTk):
         )
         self.btn_clear.pack(side="left", padx=(0, 10))
 
-        # Menú desplegable para el Historial FIFO (máximo 10)
         self.history_var = ctk.StringVar(value="📜 Historial (0)")
         self.opt_history = ctk.CTkOptionMenu(
             frame_ip_actions,
@@ -398,7 +485,7 @@ class NetConfigSwitcher(ctk.CTk):
             font=(FONT_FAMILY, 12, "bold"),
             text_color=TEXT_MUTED
         )
-        self.lbl_sub.pack(pady=(0, 5))
+        self.lbl_sub.pack(pady=(0, 4))
 
         frame_subnet_container = ctk.CTkFrame(
             self, width=360, height=40,
@@ -407,10 +494,9 @@ class NetConfigSwitcher(ctk.CTk):
             border_width=1.5,
             corner_radius=8
         )
-        frame_subnet_container.pack(pady=(0, 16))
+        frame_subnet_container.pack(pady=(0, 14))
         frame_subnet_container.pack_propagate(False)
 
-        # Candado / botón de desbloqueo
         self.btn_lock = ctk.CTkButton(
             frame_subnet_container,
             text="🔒",
@@ -424,7 +510,6 @@ class NetConfigSwitcher(ctk.CTk):
         )
         self.btn_lock.pack(side="left", padx=(6, 0))
 
-        # Entrada de máscara de subred
         self.entry_subnet = ctk.CTkEntry(
             frame_subnet_container,
             width=300,
@@ -439,50 +524,50 @@ class NetConfigSwitcher(ctk.CTk):
         self.entry_subnet.configure(state="disabled")
         self.entry_subnet.pack(side="left", fill="both", expand=True, padx=(0, 10))
 
-        # 4. SECCIÓN: Gateway (.200 Fixed)
-        lbl_gw = ctk.CTkLabel(
-            self, text="Gateway (.200 Fixed)",
+        # 4. SECCIÓN: Gateway (Diseño Simétrico con 4 casillas y candado en .200)
+        self.lbl_gw = ctk.CTkLabel(
+            self, text="Gateway (.200 Default Locked)",
             font=(FONT_FAMILY, 12, "bold"),
             text_color=TEXT_MUTED
         )
-        lbl_gw.pack(pady=(0, 5))
+        self.lbl_gw.pack(pady=(0, 4))
 
-        frame_gw_container = ctk.CTkFrame(
-            self, width=360, height=40,
+        frame_gw_octets = ctk.CTkFrame(self, fg_color="transparent")
+        frame_gw_octets.pack(pady=(0, 18))
+
+        # Gateway Octeto 1 (Fijo: 192)
+        self.entry_gw_oct1 = self._create_octet_box(frame_gw_octets, "192", readonly=True)
+        self.entry_gw_oct1.pack(side="left", padx=4)
+
+        # Gateway Octeto 2 (Fijo: 168)
+        self.entry_gw_oct2 = self._create_octet_box(frame_gw_octets, "168", readonly=True)
+        self.entry_gw_oct2.pack(side="left", padx=4)
+
+        # Gateway Octeto 3 (Sincronizado automáticamente con IP Octeto 3)
+        self.entry_gw_oct3 = self._create_octet_box(frame_gw_octets, "1", readonly=True)
+        self.entry_gw_oct3.pack(side="left", padx=4)
+
+        # Gateway Octeto 4 (Por defecto .200, protegido por candado con clave 6363)
+        self.entry_gw_oct4 = self._create_octet_box(frame_gw_octets, "200", readonly=False)
+        self.entry_gw_oct4.pack(side="left", padx=4)
+        self.entry_gw_oct4.bind("<Key>", self._filter_gw_oct4_keys)
+
+        # Candado para desbloquear el 4to octeto del Gateway
+        self.btn_gw_lock = ctk.CTkButton(
+            frame_gw_octets,
+            text="🔒",
+            width=38,
+            height=42,
+            corner_radius=8,
             fg_color=PANEL_BG,
+            hover_color="#32374b",
             border_color=BORDER_SUBTLE,
             border_width=1.5,
-            corner_radius=8
-        )
-        frame_gw_container.pack(pady=(0, 20))
-        frame_gw_container.pack_propagate(False)
-
-        self.lbl_gateway_val = ctk.CTkLabel(
-            frame_gw_container,
-            text="192.168.1.200",
-            font=(FONT_FAMILY, 13, "bold"),
-            text_color=TEXT_MUTED,
-            anchor="w"
-        )
-        self.lbl_gateway_val.pack(side="left", padx=(16, 0), fill="both", expand=True)
-
-        # Badge lateral ".200" idéntico al mockup
-        badge_frame = ctk.CTkFrame(
-            frame_gw_container, width=54, height=26,
-            fg_color="transparent",
-            border_color=ACCENT_CYAN,
-            border_width=1.5,
-            corner_radius=6
-        )
-        badge_frame.pack(side="right", padx=(0, 8), pady=6)
-        badge_frame.pack_propagate(False)
-
-        lbl_badge_text = ctk.CTkLabel(
-            badge_frame, text=".200",
             text_color=ACCENT_CYAN,
-            font=(FONT_FAMILY, 11, "bold")
+            font=(FONT_FAMILY, 15),
+            command=self.toggle_gateway_lock
         )
-        lbl_badge_text.pack(expand=True)
+        self.btn_gw_lock.pack(side="left", padx=(4, 0))
 
         # 5. BOTÓN 1: APPLY SETTINGS (ESTÁTICA)
         self.btn_apply = ctk.CTkButton(
@@ -497,7 +582,7 @@ class NetConfigSwitcher(ctk.CTk):
             font=(FONT_FAMILY, 12, "bold"),
             command=self.apply_network_config
         )
-        self.btn_apply.pack(pady=(0, 10))
+        self.btn_apply.pack(pady=(0, 8))
 
         # 6. BOTÓN 2: OBTENER IP AUTOMÁTICAMENTE (DHCP)
         self.btn_dhcp = ctk.CTkButton(
@@ -514,7 +599,7 @@ class NetConfigSwitcher(ctk.CTk):
             font=(FONT_FAMILY, 11, "bold"),
             command=self.apply_dhcp_config
         )
-        self.btn_dhcp.pack(pady=(0, 14))
+        self.btn_dhcp.pack(pady=(0, 10))
 
         # Status feedback sutil
         self.lbl_status = ctk.CTkLabel(
@@ -545,7 +630,7 @@ class NetConfigSwitcher(ctk.CTk):
         return entry
 
     def _filter_octet_keys(self, event):
-        """Permite únicamente números y teclas de control, con auto-avance."""
+        """Permite únicamente números y teclas de control en casillas de IP, con auto-avance."""
         if event.keysym in ("BackSpace", "Delete", "Left", "Right", "Tab"):
             return None
         
@@ -555,14 +640,11 @@ class NetConfigSwitcher(ctk.CTk):
                 self.entry_oct4.focus()
             return "break"
 
-        # Permitir solo dígitos
         if not event.char.isdigit():
             return "break"
 
-        # Comprobar longitud máxima de 3 dígitos
         current_text = event.widget.get()
         if len(current_text) >= 3 and not event.widget.select_present():
-            # Si se escribe un 4to dígito en octeto 3, saltar al 4
             if event.widget == self.entry_oct3._entry:
                 self.entry_oct4.focus()
                 self.entry_oct4.delete(0, "end")
@@ -571,17 +653,32 @@ class NetConfigSwitcher(ctk.CTk):
 
         return None
 
+    def _filter_gw_oct4_keys(self, event):
+        """Controla la edición del 4to octeto del Gateway cuando está bloqueado/desbloqueado."""
+        if self.gw_locked:
+            return "break"
+
+        if event.keysym in ("BackSpace", "Delete", "Left", "Right", "Tab"):
+            return None
+
+        if not event.char.isdigit():
+            return "break"
+
+        current_text = event.widget.get()
+        if len(current_text) >= 3 and not event.widget.select_present():
+            return "break"
+
+        return None
+
     def _on_oct3_change(self, event=None):
-        """Actualiza la puerta de enlace en tiempo real según el 3er octeto."""
+        """Actualiza el 3er octeto del Gateway automáticamente al escribir en el IP."""
         oct3 = self.entry_oct3.get().strip()
-        if oct3.isdigit() and 0 <= int(oct3) <= 255:
-            self.lbl_gateway_val.configure(text=f"192.168.{oct3}.200")
-            if len(oct3) == 3 and event and event.widget == self.entry_oct3._entry:
-                self.entry_oct4.focus()
-        elif oct3 == "":
-            self.lbl_gateway_val.configure(text="192.168. .200")
-        else:
-            self.lbl_gateway_val.configure(text=f"192.168.{oct3}.200")
+        # Sincronización automática del 3er octeto del Gateway
+        self.entry_gw_oct3.delete(0, "end")
+        self.entry_gw_oct3.insert(0, oct3)
+
+        if len(oct3) == 3 and event and event.widget == self.entry_oct3._entry:
+            self.entry_oct4.focus()
 
     def load_initial_values(self):
         """Carga el historial y sincroniza valores iniciales."""
@@ -635,7 +732,7 @@ class NetConfigSwitcher(ctk.CTk):
                 prompt="Introduce la contraseña para desbloquear la máscara:"
             )
             if dialog.password is not None:
-                if dialog.password == PASSWORD_SUBNET:
+                if dialog.password == PASSWORD_SECURITY:
                     self.subnet_locked = False
                     self.entry_subnet.configure(state="normal", text_color=TEXT_LIGHT)
                     self.btn_lock.configure(text="🔓")
@@ -650,24 +747,55 @@ class NetConfigSwitcher(ctk.CTk):
             self.lbl_sub.configure(text="Subnet Mask (Locked)", text_color=TEXT_MUTED)
             self.lbl_status.configure(text="Máscara de subred bloqueada")
 
+    def toggle_gateway_lock(self):
+        """Gestiona el candado del 4to octeto del Gateway mediante clave 6363."""
+        if self.gw_locked:
+            dialog = PasswordModal(
+                self,
+                title="Seguridad - Gateway .200",
+                prompt="Introduce la contraseña (6363) para editar el Gateway:"
+            )
+            if dialog.password is not None:
+                if dialog.password == PASSWORD_SECURITY:
+                    self.gw_locked = False
+                    self.btn_gw_lock.configure(text="🔓")
+                    self.lbl_gw.configure(text="Gateway (.200 Unlocked)", text_color=ACCENT_CYAN)
+                    self.lbl_status.configure(text="Gateway desbloqueado para edición")
+                    self.entry_gw_oct4.focus()
+                else:
+                    messagebox.showerror("Seguridad", "Contraseña incorrecta. Acceso denegado.")
+        else:
+            self.gw_locked = True
+            self.btn_gw_lock.configure(text="🔒")
+            self.lbl_gw.configure(text="Gateway (.200 Default Locked)", text_color=TEXT_MUTED)
+            self.lbl_status.configure(text="Gateway bloqueado")
+
     def validate_inputs(self) -> Tuple[bool, str, str, str, str]:
-        """Valida que todos los octetos y la máscara sean correctos."""
+        """Valida que todos los octetos de IP, Gateway y máscara sean correctos."""
         oct3 = self.entry_oct3.get().strip()
         oct4 = self.entry_oct4.get().strip()
         subnet = self.entry_subnet.get().strip()
+        gw_oct3 = self.entry_gw_oct3.get().strip()
+        gw_oct4 = self.entry_gw_oct4.get().strip()
 
         if not (oct3.isdigit() and 0 <= int(oct3) <= 255):
-            return False, "El tercer octeto debe ser un número entero entre 0 y 255.", "", "", ""
+            return False, "El tercer octeto de la IP debe ser un número entre 0 y 255.", "", "", ""
 
         if not (oct4.isdigit() and 0 <= int(oct4) <= 255):
-            return False, "El cuarto octeto debe ser un número entero entre 0 y 255.", "", "", ""
+            return False, "El cuarto octeto de la IP debe ser un número entre 0 y 255.", "", "", ""
+
+        if not (gw_oct3.isdigit() and 0 <= int(gw_oct3) <= 255):
+            return False, "El tercer octeto del Gateway debe ser un número entre 0 y 255.", "", "", ""
+
+        if not (gw_oct4.isdigit() and 0 <= int(gw_oct4) <= 255):
+            return False, "El cuarto octeto del Gateway debe ser un número entre 0 y 255.", "", "", ""
 
         sub_parts = subnet.split(".")
         if len(sub_parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in sub_parts):
             return False, "La máscara de subred debe tener el formato estándar (ej. 255.255.255.0).", "", "", ""
 
         ip = f"192.168.{oct3}.{oct4}"
-        gateway = f"192.168.{oct3}.200"
+        gateway = f"192.168.{gw_oct3}.{gw_oct4}"
 
         return True, "", ip, subnet, gateway
 
